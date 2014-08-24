@@ -10,6 +10,7 @@ import Web.Twitter.Types
 import Web.Twitter.Fetch
 import Data.Time
 import Data.Time.Format
+import Data.Maybe
 import Data.Version (showVersion)
 import Control.Monad
 import System.Locale
@@ -17,6 +18,7 @@ import System.Directory
 import System.Console.CmdArgs
 import qualified System.IO.Strict as S
 import qualified System.FilePath as Fp
+import qualified Control.Applicative as A
 import Text.PrettyPrint.ANSI.Leijen hiding (list)
 
 data Argument = Argument {follow :: Maybe String,
@@ -133,7 +135,8 @@ arguments = Argument { follow = def &= typ "SCREEN_NAME" &= help "Follow the use
                      } &= program appName &= summary (appName ++ " " ++ (showVersion version) ++ " " ++ "Copyright R. Emre Başar 2011 - ...")
 
 argumentsGiven :: Argument -> Bool
-argumentsGiven args = (follow args /= Nothing) || (no_follow args /= Nothing) || (list args)
+argumentsGiven (Argument Nothing Nothing False) = False
+argumentsGiven _ = True
 
 applyArgs :: Argument -> State -> IO State
 applyArgs args cs = if (argumentsGiven args) then
@@ -144,19 +147,14 @@ applyArgs args cs = if (argumentsGiven args) then
 listFollowed state = putDoc $ (vsep $ map (text . fst) state) <$> empty
 
 processArguments :: Argument -> State -> IO State
-processArguments args state = do newState <- case (follow args) of
-                                                  Just name -> addFollow state name
-                                                  Nothing -> return state
-                                 newState <- case (no_follow args) of
-                                                  Just name -> rmFollow newState name
-                                                  Nothing -> return newState
+processArguments args state = do newState <- processState addFollow (follow args) state >>= processState rmFollow (no_follow args)
                                  when (list args) $ listFollowed newState
                                  return newState
+  where
+    processState f m s = maybe (return s) (f s) m
 
 main :: IO ()
 main = do args <- cmdArgs arguments
-          currentState <- loadState
-          case currentState of
-            Just st -> do latestState <- applyArgs args st
-                          saveState latestState
-            Nothing -> putStrLn "You are not following anyone. Try adding some people with --follow"          
+          loadState >>= maybe usage (\st -> applyArgs args st >>= saveState)
+  where
+    usage = putStrLn "You are not following anyone. Try adding some people with --follow"
